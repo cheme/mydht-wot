@@ -39,8 +39,6 @@ optional = true
 version = "0.6.7"
 optional = true
 
-
-
 [dependencies.striple]
 version = "0.0.1"
 git = "https://github.com/cheme/rust-striple.git"
