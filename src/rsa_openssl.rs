@@ -724,9 +724,8 @@ impl Shadow for AESShadower {
 fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize, smode : bool) {
 
-  let fromP = RSAPeer::new("from".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000));
-  let toP = RSAPeer::new("to".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9001));
-  shadower_test(fromP,toP,input_length,write_buffer_length,read_buffer_length,smode);
+  let to_p = RSAPeer::new("to".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9001));
+  shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
 
 }
 
