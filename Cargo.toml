@@ -31,6 +31,12 @@ time = "0.1.33"
 #path = "../mydht-base/"
 git = "https://github.com/cheme/mydht-base.git"
 
+
+[dev-dependencies.mydht-basetest]
+#path = "../mydht-basetest/"
+git = "https://github.com/cheme/mydht-basetest.git"
+
+
 [dependencies.rust-crypto]
 version = "0.2.33"
 optional = true

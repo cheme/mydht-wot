@@ -10,6 +10,9 @@
 extern crate openssl;
 extern crate time;
 
+#[cfg(test)]
+extern crate mydht_basetest;
+
 //use mydhtresult::Result as MDHTResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
@@ -52,6 +55,8 @@ use std::net::Ipv4Addr;
 use mydht_base::utils;
 #[cfg(test)]
 use std::io::Cursor;
+#[cfg(test)]
+use self::mydht_basetest::shadow::shadower_test;
 
 
 static RSA_SIZE : usize = 2048;
@@ -721,46 +726,10 @@ read_buffer_length : usize, smode : bool) {
 
   let fromP = RSAPeer::new("from".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000));
   let toP = RSAPeer::new("to".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9001));
-  let mut inputb = vec![0;input_length];
-  OsRng::new().unwrap().fill_bytes(&mut inputb);
-  let mut output = Cursor::new(Vec::new());
-  let input = inputb;
-  let mut fromShad = toP.get_shadower(true);
-  let mut toShad = toP.get_shadower(false);
-
-  fromShad.shadow_header(&mut output, &smode).unwrap();
-  let mut ix = 0;
-  while ix < input_length {
-    if ix + write_buffer_length < input_length {
-      ix += fromShad.shadow_iter(&input[ix..ix + write_buffer_length], &mut output, &smode).unwrap();
-    } else {
-      ix += fromShad.shadow_iter(&input[ix..], &mut output, &smode).unwrap();
-    }
-  }
-  fromShad.shadow_flush(&mut output, &smode).unwrap();
-
-  let mut inputV = Cursor::new(output.into_inner());
-
-  let mode = toShad.read_shadow_header(&mut inputV).unwrap();
-  assert!(smode == mode);
-
-
-  let mut ix = 0;
-  let mut readbuf = vec![0;read_buffer_length];
-  while ix < input_length {
-    let l = toShad.read_shadow_iter(&mut inputV, &mut readbuf, &smode).unwrap();
-    assert!(l!=0);
-
-    println!("{:?}",&input[ix..ix + l]);
-    println!("{:?}",&readbuf[..l]);
-    assert!(&readbuf[..l] == &input[ix..ix + l]);
-    ix += l;
-  }
-
-  let l = toShad.read_shadow_iter(&mut inputV, &mut readbuf, &smode).unwrap();
-  assert!(l==0);
+  shadower_test(fromP,toP,input_length,write_buffer_length,read_buffer_length,smode);
 
 }
+
 #[test]
 fn rsa_shadower1_test () {
   let smode = false;
