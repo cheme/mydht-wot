@@ -496,13 +496,10 @@ impl AESShadower {
 
   // TODO make it generic over peer (new fn needed)
   pub fn new(dest : &RSAPeer, write : bool) -> Self {
-    let mut rng = OsRng::new().unwrap();
 
   
     let key = if write {
-      let mut s = vec![0; AES_256_KEY_SIZE];
-      rng.fill_bytes(&mut s);
-      s
+      AESShadower::static_shadow_simkey()
     } else {
       Vec::new()
     };
@@ -520,77 +517,35 @@ impl AESShadower {
     AESShadower {
       buf : buf,
       bufix : 0,
+      // sim key to use
       key : key,
       crypter : crypter,
+      // asym key to established simkey
       keyexch : Some(enckey),
     }
+  }
+  fn static_shadow_simkey() -> Vec<u8> {
+    let mut rng = OsRng::new().unwrap();
+    let mut s = vec![0; AES_256_KEY_SIZE];
+    rng.fill_bytes(&mut s);
+    s
   }
 }
 
 
 impl Shadow for AESShadower {
-  type ShadowMode = bool;
-  #[inline]
-  fn shadow_header<W : Write> (&mut self, w : &mut W, m : &Self::ShadowMode) -> IoResult<()> {
-
-    if *m {
-      // change salt each time (if to heavy a counter to change each n time
-      try!(w.write(&[CIPHER_TAG_AES_256_CBC]));
-      OsRng::new().unwrap().fill_bytes(&mut self.buf);
-      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
-      try!(w.write(&self.buf[..]));
-      match self.keyexch {
-        Some(ref apk) => {
-          let enckey = RSAPeer::ciph_cont(&(*apk), &self.key[..]);
-        println!("{}",self.key.len()); // TODO check size of key
-        println!("{}",enckey.len()); // TODO check size of key
-      assert!(enckey.len() == 256);
-          try!(w.write(&enckey));
-        },
-        None => (),
-      }
-      self.keyexch = None;
-    } else {
-      try!(w.write(&[CIPHER_TAG_NOPE]));
-    }
-    Ok(())
-  }
+  type ShadowMode = bool; // TODO shadowmode allowing head to be RSA only
 
   #[inline]
-  fn read_shadow_header<R : Read> (&mut self, r : &mut R) -> IoResult<Self::ShadowMode> {
-    let mut tag = [0];
-    try!(r.read(&mut tag));
-    if tag[0] == CIPHER_TAG_AES_256_CBC {
-      try!(r.read(&mut self.buf[..]));
-      match self.keyexch {
-        Some(ref apk) => {
-          let mut enckey = vec![0;256]; // enc from 32 to 256
-          try!(r.read(&mut enckey[..]));
-          // init key
-          let okey = RSAPeer::unciph_cont(&(*apk), &enckey[..]);
-          match okey {
-            Some(k) => self.key = k,
-            None => return Err(IoError::new (
-              IoErrorKind::Other,
-              "Cannot read Rsa Shadow key",
-            )),
-          }
-
-        },
-        None => {
-        },
-      }
-      self.keyexch = None;
-      self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
-      Ok(true)
-    } else {
-      Ok(false)
-    }
-  }
- 
-  #[inline]
-  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
+  /// warning iter sim does not use a salt, please add one if needed (common use case is one key
+  /// per message and salt is useless)
+  fn shadow_iter_sim<W : Write> (&mut self, k : &[u8], m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
     if *sm {
+      if self.keyexch.is_some() {
+        // new shadower, running with iter_sim : simetric key need init
+        self.crypter.init(Mode::Encrypt,&k[..],&[]); // no salt
+        self.keyexch = None;
+      }
     // best case
     if self.bufix == 0 && m.len() == AES_256_BLOCK_SIZE {
       let r = self.crypter.update(m);
@@ -624,9 +579,16 @@ impl Shadow for AESShadower {
     }
   }
 
+
   #[inline]
-  fn read_shadow_iter<R : Read> (&mut self, r : &mut R, resbuf: &mut [u8], sm : &Self::ShadowMode) -> IoResult<usize> {
+  /// same as write no salt (key should be unique or read a salt
+  fn read_shadow_iter_sim<R : Read> (&mut self, k : &[u8], r : &mut R, resbuf : &mut [u8], sm : &Self::ShadowMode) -> IoResult<usize> {
     if *sm {
+      if self.keyexch.is_some() {
+        // new shadower, running with iter_sim : simetric key need init
+        self.crypter.init(Mode::Decrypt,&k[..],&[]); // no salt
+        self.keyexch = None;
+      }
       // is there something to write
       if self.bufix == 0 {
         let mut s = 0;
@@ -691,23 +653,110 @@ impl Shadow for AESShadower {
     } else {
       r.read(resbuf)
     }
+ 
+  }
+  #[inline]
+  fn shadow_sim_flush<W : Write> (&mut self, w : &mut W, sm : &Self::ShadowMode) -> IoResult<()> {
+    // encrypt remaining content in buffer and write, + call to writer flush
+    if *sm {
+      if self.bufix > 0 {
+        let r = self.crypter.update(&self.buf[..self.bufix]);
+        try!(w.write(&r[..]));
+      }
+      // always finalize (padding)
+      let r2 = self.crypter.finalize();
+      if r2.len() > 0 {
+          try!(w.write(&r2[..]));
+      }
+    }
+    w.flush()
+  }
+  #[inline]
+  fn shadow_simkey(&mut self, sm : &Self::ShadowMode) -> Vec<u8> {
+    if *sm {
+      AESShadower::static_shadow_simkey()
+    } else {
+      Vec::new()
+    }
+  }
+
+  #[inline]
+  fn shadow_header<W : Write> (&mut self, w : &mut W, m : &Self::ShadowMode) -> IoResult<()> {
+
+    if *m {
+      // change salt each time (if to heavy a counter to change each n time
+      try!(w.write(&[CIPHER_TAG_AES_256_CBC]));
+      OsRng::new().unwrap().fill_bytes(&mut self.buf);
+      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
+      try!(w.write(&self.buf[..]));
+      match self.keyexch {
+        Some(ref apk) => {
+          let enckey = RSAPeer::ciph_cont(&(*apk), &self.key[..]);
+        println!("{}",self.key.len()); // TODO check size of key
+        println!("{}",enckey.len()); // TODO check size of key
+      assert!(enckey.len() == 256);
+          try!(w.write(&enckey));
+        },
+        None => (),
+      }
+      self.keyexch = None;
+    } else {
+      try!(w.write(&[CIPHER_TAG_NOPE]));
+    }
+    Ok(())
+  }
+
+  #[inline]
+  fn read_shadow_header<R : Read> (&mut self, r : &mut R) -> IoResult<Self::ShadowMode> {
+    let mut tag = [0];
+    try!(r.read(&mut tag));
+    if tag[0] == CIPHER_TAG_AES_256_CBC {
+      try!(r.read(&mut self.buf[..]));
+      match self.keyexch {
+        Some(ref apk) => {
+          let mut enckey = vec![0;256]; // enc from 32 to 256
+          try!(r.read(&mut enckey[..]));
+          // init key
+          let okey = RSAPeer::unciph_cont(&(*apk), &enckey[..]);
+          match okey {
+            Some(k) => self.key = k,
+            None => return Err(IoError::new (
+              IoErrorKind::Other,
+              "Cannot read Rsa Shadow key",
+            )),
+          }
+
+        },
+        None => {
+        },
+      }
+      self.keyexch = None;
+      self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
+      Ok(true)
+    } else {
+      Ok(false)
+    }
+  }
+ 
+  #[inline]
+  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
+
+    self.shadow_iter_sim (m, m, w, sm)// m is used as key but shadower will not use it because a header has been written
+  }
+
+  #[inline]
+  fn read_shadow_iter<R : Read> (&mut self, r : &mut R, resbuf: &mut [u8], sm : &Self::ShadowMode) -> IoResult<usize> {
+
+    self.read_shadow_iter_sim (&[], r, resbuf, sm)
   }
  
   #[inline]
   fn shadow_flush<W : Write> (&mut self, w : &mut W, sm : &Self::ShadowMode) -> IoResult<()> {
-    // encrypt remaining content in buffer and write, + call to writer flush
     if *sm { 
-     if self.bufix > 0 {
-        let r = self.crypter.update(&self.buf[..self.bufix]);
-        try!(w.write(&r[..]));
+      self.shadow_sim_flush(w,sm)
+    } else {
+      w.flush()
     }
-    // always finalize (padding)
-    let r2 = self.crypter.finalize();
-    if r2.len() > 0 {
-        try!(w.write(&r2[..]));
-    }
-    }
-    w.flush()
   }
  
   #[inline]
@@ -715,11 +764,16 @@ impl Shadow for AESShadower {
     true
   }
   #[inline]
+  fn default_head_mode () -> Self::ShadowMode {
+    true // TODO add a sym only mode
+  }
+  #[inline]
   fn default_auth_mode () -> Self::ShadowMode {
     false
   }
 
 }
+
 #[cfg(test)]
 fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize, smode : bool) {
