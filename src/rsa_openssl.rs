@@ -474,10 +474,12 @@ pub struct AESShadower {
   /// index of content writen in buffer but not yet enciphered
   bufix : usize,
   crypter : Crypter,
-  /// Symetric key, renew on connect (aka new object)
+  /// Symetric key, renew on connect (aka new object), len 0 when not exchanged
   key : Vec<u8>,
-  /// key to send
-  keyexch : Option<Arc<PKey>>,
+  /// key to send sym k
+  keyexch : Arc<PKey>,
+  /// last symetric key used, len 0 if none
+  lastkey : Vec<u8>,
 
 }
 
@@ -498,11 +500,6 @@ impl AESShadower {
   pub fn new(dest : &RSAPeer, write : bool) -> Self {
 
   
-    let key = if write {
-      AESShadower::static_shadow_simkey()
-    } else {
-      Vec::new()
-    };
 
 
     let buf =  vec![0; AES_256_BLOCK_SIZE];
@@ -517,11 +514,14 @@ impl AESShadower {
     AESShadower {
       buf : buf,
       bufix : 0,
-      // sim key to use
-      key : key,
+      // sim key to use len 0 until exchanged
+      key : Vec::new(), // 0 length sim key until exchanged
       crypter : crypter,
       // asym key to established simkey
-      keyexch : Some(enckey),
+      keyexch : enckey,
+      lastkey : Vec::new(),
+
+
     }
   }
   fn static_shadow_simkey() -> Vec<u8> {
@@ -541,10 +541,11 @@ impl Shadow for AESShadower {
   /// per message and salt is useless)
   fn shadow_iter_sim<W : Write> (&mut self, k : &[u8], m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
     if *sm {
-      if self.keyexch.is_some() {
+      if k.len() != 0 && &self.lastkey[..] != k {
         // new shadower, running with iter_sim : simetric key need init
         self.crypter.init(Mode::Encrypt,&k[..],&[]); // no salt
-        self.keyexch = None;
+        self.lastkey = k.to_vec();
+        self.bufix = 0;
       }
     // best case
     if self.bufix == 0 && m.len() == AES_256_BLOCK_SIZE {
@@ -584,10 +585,11 @@ impl Shadow for AESShadower {
   /// same as write no salt (key should be unique or read a salt
   fn read_shadow_iter_sim<R : Read> (&mut self, k : &[u8], r : &mut R, resbuf : &mut [u8], sm : &Self::ShadowMode) -> IoResult<usize> {
     if *sm {
-      if self.keyexch.is_some() {
+      if k.len() != 0 && &self.lastkey[..] != k {
         // new shadower, running with iter_sim : simetric key need init
         self.crypter.init(Mode::Decrypt,&k[..],&[]); // no salt
-        self.keyexch = None;
+        self.lastkey = k.to_vec();
+        self.bufix = 0;
       }
       // is there something to write
       if self.bufix == 0 {
@@ -601,7 +603,12 @@ impl Shadow for AESShadower {
         }
         let dec = if self.bufix == 0 {
           let dec = self.crypter.finalize();
-          self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+          println!("s : {:?} , {:?}",self.key.len(), self.buf.len());
+          if k.len() != 0 {
+            self.crypter.init(Mode::Decrypt,k,&self.buf[..]); // only for next finalize to return 0
+          } else {
+            self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+          }
           if dec.len() == 0 {
             return Ok(0)
           };
@@ -624,7 +631,11 @@ impl Shadow for AESShadower {
             }
             if dec.len() == 0 {
               dec = self.crypter.finalize();
-              self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+              if k.len() != 0 {
+                self.crypter.init(Mode::Decrypt,k,&self.buf[..]); // only for next finalize to return 0
+              } else {
+                self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+              }
             }
           };
            dec
@@ -687,19 +698,17 @@ impl Shadow for AESShadower {
       // change salt each time (if to heavy a counter to change each n time
       try!(w.write(&[CIPHER_TAG_AES_256_CBC]));
       OsRng::new().unwrap().fill_bytes(&mut self.buf);
-      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
       try!(w.write(&self.buf[..]));
-      match self.keyexch {
-        Some(ref apk) => {
-          let enckey = RSAPeer::ciph_cont(&(*apk), &self.key[..]);
+    if self.key.len() == 0 {
+      self.key = self.shadow_simkey(m);
+          let enckey = RSAPeer::ciph_cont(&(*self.keyexch), &self.key[..]);
         println!("{}",self.key.len()); // TODO check size of key
         println!("{}",enckey.len()); // TODO check size of key
       assert!(enckey.len() == 256);
           try!(w.write(&enckey));
-        },
-        None => (),
-      }
-      self.keyexch = None;
+    }
+      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
+      self.bufix = 0;
     } else {
       try!(w.write(&[CIPHER_TAG_NOPE]));
     }
@@ -712,12 +721,11 @@ impl Shadow for AESShadower {
     try!(r.read(&mut tag));
     if tag[0] == CIPHER_TAG_AES_256_CBC {
       try!(r.read(&mut self.buf[..]));
-      match self.keyexch {
-        Some(ref apk) => {
+      if self.key.len() == 0 {
           let mut enckey = vec![0;256]; // enc from 32 to 256
           try!(r.read(&mut enckey[..]));
           // init key
-          let okey = RSAPeer::unciph_cont(&(*apk), &enckey[..]);
+          let okey = RSAPeer::unciph_cont(&(*self.keyexch), &enckey[..]);
           match okey {
             Some(k) => self.key = k,
             None => return Err(IoError::new (
@@ -725,13 +733,9 @@ impl Shadow for AESShadower {
               "Cannot read Rsa Shadow key",
             )),
           }
-
-        },
-        None => {
-        },
       }
-      self.keyexch = None;
       self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
+        self.bufix = 0;
       Ok(true)
     } else {
       Ok(false)
@@ -741,7 +745,7 @@ impl Shadow for AESShadower {
   #[inline]
   fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
 
-    self.shadow_iter_sim (m, m, w, sm)// m is used as key but shadower will not use it because a header has been written
+    self.shadow_iter_sim (&[], m, w, sm)// null length key means already init (header)
   }
 
   #[inline]
