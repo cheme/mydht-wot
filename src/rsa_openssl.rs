@@ -591,7 +591,7 @@ impl Shadow for AESShadower {
         self.lastkey = k.to_vec();
         self.bufix = 0;
       }
-      // is there something to write
+      // feed buffer (one block length) if empty
       if self.bufix == 0 {
         let mut s = 0;
         let mut has_next = true;
@@ -602,8 +602,9 @@ impl Shadow for AESShadower {
           self.bufix += s;
         }
         let dec = if self.bufix == 0 {
+          // nothing to read, finalize
           let dec = self.crypter.finalize();
-          println!("s : {:?} , {:?}",self.key.len(), self.buf.len());
+//          println!("s : {:?} , {:?}",self.key.len(), self.buf.len());
           if k.len() != 0 {
             self.crypter.init(Mode::Decrypt,k,&self.buf[..]); // only for next finalize to return 0
           } else {
@@ -617,15 +618,16 @@ impl Shadow for AESShadower {
           // decode - call directly finalize as we have buf of blocksize
           let mut dec = self.crypter.update(&self.buf[..self.bufix]);
           if dec.len() == 0 {
+
+            //println!("!{}", self.bufix);
             // padding possible for last block
-        let mut rs = 0;
-        let mut has_next = true;
-        while has_next  {
-          s = try!(r.read(&mut self.buf[rs..]));
-          has_next = s != 0;
-          rs += s;
-        }
- 
+            let mut rs = 0;
+            let mut has_next = true;
+            while has_next {
+              s = try!(r.read(&mut self.buf[rs..]));
+              has_next = s != 0;
+              rs += s;
+            }
             if rs > 0 {
               dec = self.crypter.update(&self.buf[..rs]);
             }
@@ -638,7 +640,7 @@ impl Shadow for AESShadower {
               }
             }
           };
-           dec
+          dec
         };
 
         assert!(dec.len() > 0 && dec.len() <= AES_256_BLOCK_SIZE );
@@ -680,7 +682,7 @@ impl Shadow for AESShadower {
           try!(w.write(&r2[..]));
       }
     }
-    w.flush()
+    //w.flush()
   }
   #[inline]
   fn shadow_simkey(&mut self, sm : &Self::ShadowMode) -> Vec<u8> {
@@ -759,7 +761,8 @@ impl Shadow for AESShadower {
     if *sm { 
       self.shadow_sim_flush(w,sm)
     } else {
-      w.flush()
+      //w.flush()
+      Ok(())
     }
   }
  
