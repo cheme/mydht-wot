@@ -7,7 +7,7 @@ use bincode::SizeLimit;
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use mydht_base::keyval::{KeyVal};
 use mydht_base::utils::ArcKV;
-use mydht_base::utils::SocketAddrExt;
+use mydht_base::transport::SerSocketAddr;
 use mydht_base::utils::{TimeSpecExt};
 use mydht_base::keyval::{Attachment,SettableAttachment};
 use super::{TrustedPeer,TrustedVal,PeerTrustRel};
@@ -36,7 +36,7 @@ pub struct SendablePeerEnc<'a> {
   pub date : &'a TimeSpecExt,
   pub peersign : &'a Vec<u8>,
   pub addressdate : &'a TimeSpecExt,
-  pub address : &'a SocketAddrExt,
+  pub address : &'a SerSocketAddr,
 }
 
 #[derive(RustcDecodable)]
@@ -47,7 +47,7 @@ pub struct SendablePeerDec {
   pub date : TimeSpecExt,
   pub peersign : Vec<u8>,
   pub addressdate : TimeSpecExt,
-  pub address : SocketAddrExt,
+  pub address : SerSocketAddr,
 }
 
 /// Trust signing from one node to another. Key is signature (require something to keep relation

@@ -40,7 +40,7 @@ use std::path::{PathBuf};
 
 use mydht_base::keyval::{KeyVal};
 use std::net::{SocketAddr};
-use mydht_base::utils::SocketAddrExt;
+use mydht_base::transport::SerSocketAddr;
 use mydht_base::utils::{TimeSpecExt};
 use mydht_base::keyval::{Attachment,SettableAttachment};
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
@@ -107,7 +107,7 @@ pub struct RSAPeer {
   /// peers with incorrect address would not be returned in 
   /// findpeerrs but possibly return in findkv (for example in a wot
   /// findkv is to check content, while findpeers to communicate
-  pub address : SocketAddrExt,
+  pub address : SerSocketAddr,
 
   ////// local info 
   
@@ -375,7 +375,7 @@ impl RSAPeer {
       date : now.clone(),
       peersign : sign,
       addressdate : now.clone(),
-      address : SocketAddrExt(address),
+      address : SerSocketAddr(address),
       privatekey : Some(private),
     }
   }
@@ -455,11 +455,11 @@ impl KeyVal for RSAPeer {
 impl SettableAttachment for RSAPeer {}
 
 impl Peer for RSAPeer {
-  type Address = SocketAddr;
+  type Address = SerSocketAddr;
   type Shadow = AESShadower;
   #[inline]
-  fn to_address(&self) -> SocketAddr {
-    self.address.0
+  fn to_address(&self) -> SerSocketAddr {
+    self.address.clone()
   }
   #[inline]
   fn get_shadower (&self, write : bool) -> Self::Shadow {
@@ -683,6 +683,7 @@ impl Shadow for AESShadower {
       }
     }
     //w.flush()
+    Ok(())
   }
   #[inline]
   fn shadow_simkey(&mut self, sm : &Self::ShadowMode) -> Vec<u8> {
