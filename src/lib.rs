@@ -1,5 +1,6 @@
 
 #![feature(convert)]
+#![feature(associated_consts)]
 #![feature(slice_bytes)]
 #![feature(deque_extras)] // TODO could be removed
 
