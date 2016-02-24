@@ -19,6 +19,7 @@ use self::mydht_openssl::rsa_openssl::{
   PKeyExt,
   RSATruster,
   AESShadower,
+  ASymSymMode,
 };
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
@@ -156,6 +157,9 @@ impl RSATruster for RSAPeer {
   const SHADOW_TYPE : SymmType = SymmType::AES_256_CBC;
   const CRYPTER_BLOCK_SIZE : usize = 16;
   const CRYPTER_KEY_SIZE : usize = 32;
+  const CRYPTER_KEY_ENC_SIZE : usize = 256;
+  const CRYPTER_KEY_DEC_SIZE : usize = 214;
+
 
 
   fn get_pkey<'a>(&'a self) -> &'a PKeyExt {
@@ -366,17 +370,16 @@ impl Peer for RSAPeer {
   }
   #[inline]
   fn default_message_mode (&self) -> <Self::Shadow as Shadow>::ShadowMode {
-    true
+    ASymSymMode::ASymSym
   }
   #[inline]
   fn default_header_mode (&self) -> <Self::Shadow as Shadow>::ShadowMode {
-    true // TODO add a sym only mode
+    ASymSymMode::ASymOnly
   }
   #[inline]
   fn default_auth_mode (&self) ->  <Self::Shadow as Shadow>::ShadowMode {
-    false
+    ASymSymMode::None
   }
-
 
 }
 
